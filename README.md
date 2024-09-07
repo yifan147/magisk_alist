@@ -5,7 +5,7 @@ A Magisk module for alist , with automatic update alist version
 
 支持32/64位的arm设备,自动检查更新,网络连接成功才会启动alist
 
-用户名/密码admin
+用户名/密码admin(重复刷入模块会重置密码)
 
 更新频率:启动时 and 1次/天; 更新源:清华termux源
 
