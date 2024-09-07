@@ -95,8 +95,7 @@ echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
 	#本模块会备份恢复上次运行alist的版本,所以模块自带的alist版本不会影响后续检测升级,使用的是上次升级后的版本
 	echo "当前版本为$cur_ver" >> download.log 2>&1
   # 比较版本号
-  $MODDIR/dpkg --compare-versions $cur_ver lt $new_ver
-  if [ $? -eq 0 ]; then
+  if $MODDIR/dpkg --compare-versions "$cur_ver" lt "$new_ver"; then
     echo "需要升级。" >> download.log
     # 更新操作开始
     mkdir -p tmp/tmp_deb/
