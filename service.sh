@@ -27,7 +27,7 @@ local abi=$(file_getprop /system/build.prop ro.product.cpu.abi);
     x86*) ARCH=x86;;
     mips64*) ARCH=aarch64;;
     mips*) ARCH=arm;;
-    *) ui_print "Unknown architecture: $abi"; abort;;
+    *) abort "不支持该架构: $abi";;
   esac;
 }
 file_getprop() { grep "^$2=" "$1" | tail -n1 | cut -d= -f2-; }
@@ -69,7 +69,7 @@ stop_for_update() {
 }
 
 check_alist() {
-	if [ "$(pgrep alist)" ]; then
+	if [ -n "$(pgrep -x alist)" ]; then
 	echo "$(date +%y-%m-%d-%T) 健康检查:alist正在运行" >> download.log
 	else
 	echo "$(date +%y-%m-%d-%T) 健康检查:alist未运行" >> download.log
@@ -78,16 +78,19 @@ check_alist() {
 
 update_check() {
 	cd $MODDIR/
-	sleep 1s
 echo "$(date +%y-%m-%d-%T) 检查更新" >> download.log
-find_arch
 echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
 
 #获取最新版本号
-  url=$(timeout 50s curl -OL https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/dists/stable/main/binary-${ARCH}/Packages && grep pool Packages |grep alist |awk '{print $2}')
-	new_ver=$(grep -A 6 -i 'Package: alist' Packages|grep -iw "^version"|tr -d -c '[0-9] .')
+  url=$(timeout 50s curl -fL -O https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/dists/stable/main/binary-${ARCH}/Packages && grep pool Packages |grep alist |awk '{print $2}')
+	new_ver=$(awk '/^Package: alist$/{p=1} p&&/^Version: /{print $2;exit}' Packages 2>/dev/null)
 	echo "最新版本为$new_ver" >> download.log 2>&1
-	
+	#版本号获取失败则跳过本次更新,避免空版本号被误判为"需要升级"
+	if [ -z "$new_ver" ]; then
+		echo "$(date +%y-%m-%d-%T) 获取最新版本失败,跳过本次更新" >> download.log
+		rm -f Packages 2>/dev/null
+		return
+	fi
 	#如果能直接访问github，最新版本号可以这样获取curl -s "https://api.github.com/repos/alist-org/alist/releases/latest"|grep tag_name|tr -d -c '[0-9] .'
 	cur_ver=$($MODDIR/alist version|grep -iw "^version"|tr -d -c '[0-9] .')
 	#模块自带的alist版本仅用于首次启动，后续以实际更新后的版本为准
@@ -97,12 +100,24 @@ echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
     echo "需要升级。" >> download.log
     # 更新操作开始
     mkdir -p tmp/tmp_deb/
-    timeout 360s curl -L https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/${url} -o tmp/tmp_deb/alist_latest.deb
+    if ! timeout 360s curl -fL https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/${url} -o tmp/tmp_deb/alist_latest.deb; then
+      echo "$(date +%y-%m-%d-%T) deb下载失败,跳过本次更新" >> download.log
+      rm -rf tmp/tmp_deb/* 2>/dev/null
+      rm -f Packages 2>/dev/null
+      return
+    fi
     chmod 755 dpkg
     echo "现在开始解压deb" >> download.log
-    # 解压deb包
-    "${BUSYBOX}" ar -p tmp/tmp_deb/alist_latest.deb data.tar.xz > "tmp/tmp_deb/data.tar.xz" &&
-    "${BUSYBOX}" tar -xf "tmp/tmp_deb/data.tar.xz" -C "tmp/tmp_deb/" &&
+    # 解压deb包,失败则清理并跳过
+    if "${BUSYBOX}" ar -p tmp/tmp_deb/alist_latest.deb data.tar.xz > "tmp/tmp_deb/data.tar.xz" && \
+       "${BUSYBOX}" tar -xf "tmp/tmp_deb/data.tar.xz" -C "tmp/tmp_deb/"; then
+      :
+    else
+      echo "$(date +%y-%m-%d-%T) deb解压失败,跳过本次更新" >> download.log
+      rm -rf tmp/tmp_deb/* 2>/dev/null
+      rm -f Packages 2>/dev/null
+      return
+    fi
 
     # 将最新版本复制到工作目录
     echo "现在开始更新" >> download.log
@@ -143,6 +158,9 @@ watchdog() {
 
 #启动alist
 init_admin
+#架构探测只在启动时做一次,后续update_check复用ARCH变量
+find_arch
+echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
 sleep 1s
 start_alist
 check_alist
@@ -152,10 +170,10 @@ watchdog &
 sleep 10s
 update_check
 check_alist
-#每5天检测更新一次
+#每5天检测更新一次,加随机抖动避免所有设备同时刻打清华源
 while true;
 do
-	sleep 5d
+	sleep $((5*86400 + RANDOM % 600))
 	update_check
 	sleep 1s
 	check_alist
