@@ -47,7 +47,14 @@ init_module() {
 update_status_desc() {
     local status="$1"
     local base_desc="arm64设备原生运行alist,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin"
-    sed "s|^description=.*|description=${base_desc} | ${status}|" "$MODDIR/module.prop" > "$MODDIR/module.prop.tmp"
+    local new_desc
+    case "$status" in
+        运行中)  new_desc="${base_desc} ✓ 运行中" ;;
+        已停止)  new_desc="${base_desc} ✗ 已停止" ;;
+        *)       new_desc="${base_desc}" ;;
+    esac
+    #用#作sed分隔符,避免与description中的|冲突
+    sed "s#^description=.*#description=${new_desc}#" "$MODDIR/module.prop" > "$MODDIR/module.prop.tmp"
     mv "$MODDIR/module.prop.tmp" "$MODDIR/module.prop"
 }
 

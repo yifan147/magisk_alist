@@ -4,4 +4,4 @@ version=v3.62.0
 versionCode=3620
 author=lxsy
 action=1
-description=arm64设备原生运行alist,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin | 已停止
+description=arm64设备原生运行alist,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin ✗ 已停止
