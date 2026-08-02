@@ -6,6 +6,7 @@
 
 - **开机自启**：开机后自动启动 Alist，无需手动干预
 - **进程守护**：内置看门狗，每 60 秒检查一次，Alist 异常退出自动拉起
+- **操作按钮**：Magisk 模块卡片上的"操作"按钮，支持音量键即时开关
 - **防睡眠断网**：持有 wake_lock，避免 CPU 深度睡眠导致网络中断
 - **双触发机制**：`service.sh` + `post-fs-data.sh` 双兜底，兼容正式版与 alpha 版 Magisk
 - **日志轮转**：日志超过 1MB 自动保留最后 200 行，防止膨胀
@@ -29,6 +30,33 @@
 5. 浏览器访问 `http://127.0.0.1:5244`
 6. 默认账户 `admin` 密码 `admin`
 
+## 操作控制
+
+模块安装后，在 Magisk 模块页面的 **Alist_online** 卡片底部会显示 **"操作"** 按钮。
+
+### 使用方法
+
+1. 点击 **"操作"** 按钮，弹出交互菜单
+2. 使用 **音量键** 上下选择选项，**电源键** 确认
+3. 根据当前运行状态显示不同菜单：
+
+| 状态 | 可选操作 |
+|------|----------|
+| 运行中 | 关闭模块 / 退出选择界面 |
+| 已停止 | 打开模块 / 退出选择界面 |
+
+### 即时生效
+
+- **关闭模块**：立即终止 Alist 进程，释放 5244 端口，无需重启
+- **打开模块**：立即启动 Alist 进程，恢复 5244 端口监听，无需重启
+- 模块介绍区域会实时显示当前状态（`运行中` / `已停止`）
+
+### 看门狗机制
+
+- 手动关闭模块后，看门狗暂停守护（不会自动重启）
+- 手动打开模块后，看门狗恢复守护（Alist 异常退出会自动拉起）
+- 完全无需重启即可切换状态
+
 ## 文件结构
 
 ```
@@ -37,11 +65,12 @@ magisk_alist/
 │   ├── update-binary         # Magisk 模块安装入口
 │   └── updater-script        # 占位文件（Magisk 规范要求）
 ├── alist                     # Alist 官方 android-arm64 二进制
-├── module.prop               # 模块元信息（ID/版本/作者/描述）
+├── module.prop               # 模块元信息（ID/版本/动作/描述）
 ├── customize.sh              # 安装时执行的脚本（打印提示信息）
+├── action.sh                 # 操作按钮触发的交互脚本（ui_ask 菜单）
 ├── service.sh                # Magisk service 阶段触发（正式版 Magisk）
 ├── post-fs-data.sh           # Magisk post-fs-data 阶段触发（alpha 版兜底）
-├── start_alist.sh            # 核心启动脚本（被 service.sh 和 post-fs-data.sh 调用）
+├── start_alist.sh            # 核心脚本（初始化/启动/停止/看门狗）
 ├── uninstall.sh              # 卸载时执行的清理脚本
 └── README.md
 ```
@@ -56,13 +85,18 @@ magisk_alist/
         └─ 等 sys.boot_completed=1
         └─ exec start_alist.sh
 
-start_alist.sh:
-  1. 自行计算 MODDIR（不依赖外部变量，避免 exec 后丢失）
-  2. 检查锁文件 .started，防止重复启动
-  3. 持有 wake_lock 防睡眠断网
-  4. 创建 data 目录，首次启动初始化 admin 密码
-  5. setsid 启动 alist（脱离会话，防止被回收）
-  6. 进入看门狗循环，每 60s 检查进程存活
+start_alist.sh（开机流程）:
+  1. setup_env（查找 busybox，设置 setsid）
+  2. init_module（一次性初始化：MODDIR/锁文件/wake_lock/data目录/admin密码）
+  3. launch_alist（启动 alist，更新状态描述为"运行中"）
+  4. run_watchdog（看门狗循环，检查 .paused 标记）
+
+操作流程:
+  点击"操作"按钮 → action.sh
+    ├─ 运行中: ui_ask "关闭模块" / "退出"
+    │    └─ 选择关闭 → start_alist.sh stop（创建 .paused + kill 进程 + 更新描述）
+    └─ 已停止: ui_ask "打开模块" / "退出"
+         └─ 选择打开 → start_alist.sh launch（删除 .paused + 启动进程 + 更新描述）
 ```
 
 ## 卸载方法
@@ -82,6 +116,14 @@ start_alist.sh:
 **Q: 浏览器打不开 5244？**
 - 等 30 秒让开机流程跑完
 - 用 `pgrep -af alist` 检查进程是否在跑
+- 查看 `/data/adb/modules/Alist_online/download.log` 排错
+
+**Q: 操作按钮没出现？**
+- 确认 module.prop 包含 `action=1` 字段
+- 重新安装模块
+
+**Q: 操作后状态没变？**
+- 退出 Magisk 模块页后重新进入，刷新状态
 - 查看 `/data/adb/modules/Alist_online/download.log` 排错
 
 **Q: 后台被系统杀死？**

@@ -3,4 +3,5 @@ name=Alist_online
 version=v3.62.0
 versionCode=3620
 author=lxsy
-description=arm64设备原生运行alist,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin
+action=1
+description=arm64设备原生运行alist,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin | 已停止

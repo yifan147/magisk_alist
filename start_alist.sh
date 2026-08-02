@@ -1,48 +1,63 @@
 #!/system/bin/sh
-#Magisk模块核心启动脚本,由service.sh和post-fs-data.sh共同调用
-#自行计算MODDIR,不依赖外部变量(避免exec后变量丢失)
+#Magisk Alist模块核心脚本
+#用法:
+#  无参数: 开机启动流程(初始化+启动+看门狗)
+#  launch: 手动启动alist(由action.sh调用)
+#  stop:   手动停止alist(由action.sh调用)
+
+#自行计算MODDIR,不依赖外部变量
 MODDIR=$(dirname "$0")
-#兼容直接执行脚本时dirname返回.的情况
 [ "$MODDIR" = "." ] && MODDIR=$(pwd)
 cd "$MODDIR" || exit 1
 
-#锁文件,防止service.sh和post-fs-data.sh重复启动
-LOCK="$MODDIR/.started"
-if [ -f "$LOCK" ]; then
-    exit 0
-fi
-touch "$LOCK"
+#========== 环境设置(每次都执行) ==========
+setup_env() {
+    #寻找busybox( Magisk自带,位置可能不同 )
+    BUSYBOX=""
+    for bb in /data/adb/magisk/busybox /system/bin/busybox /system/xbin/busybox; do
+        if [ -x "$bb" ]; then
+            BUSYBOX="$bb"
+            break
+        fi
+    done
+    SETSID=""
+    [ -n "$BUSYBOX" ] && SETSID="$BUSYBOX setsid"
+}
 
-#寻找busybox( Magisk自带,位置可能不同 )
-BUSYBOX=""
-for bb in /data/adb/magisk/busybox /system/bin/busybox /system/xbin/busybox; do
-    if [ -x "$bb" ]; then
-        BUSYBOX="$bb"
-        break
+#========== 一次性初始化(仅首次执行) ==========
+init_module() {
+    local LOCK="$MODDIR/.started"
+    [ -f "$LOCK" ] && return 0
+    touch "$LOCK"
+
+    chmod 755 "$MODDIR/alist"
+    #持有wake_lock防止深度睡眠时网络中断
+    echo "alist_online" > /sys/power/wake_lock 2>/dev/null
+    #确保data目录存在
+    mkdir -p "$MODDIR/data"
+    #首次安装初始化admin密码
+    if [ ! -f "$MODDIR/data/data.db" ]; then
+        "$MODDIR/alist" admin set admin
     fi
-done
-#没有busybox也能跑,只是没有setsid
-SETSID=""
-if [ -n "$BUSYBOX" ]; then
-    SETSID="$BUSYBOX setsid"
-fi
+    #更新状态描述为已停止
+    update_status_desc "已停止"
+}
 
-chmod 755 "$MODDIR/alist"
+#========== 更新module.prop状态描述 ==========
+update_status_desc() {
+    local status="$1"
+    local base_desc="arm64设备原生运行alist,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin"
+    sed "s|^description=.*|description=${base_desc} | ${status}|" "$MODDIR/module.prop" > "$MODDIR/module.prop.tmp"
+    mv "$MODDIR/module.prop.tmp" "$MODDIR/module.prop"
+}
 
-#持有wake_lock防止深度睡眠时网络中断
-echo "alist_online" > /sys/power/wake_lock 2>/dev/null
+#========== 启动alist进程 ==========
+launch_alist() {
+    #清除暂停标记
+    rm -f "$MODDIR/.paused"
 
-#确保data目录存在
-mkdir -p "$MODDIR/data"
-
-#首次安装初始化admin密码（已存在数据库则跳过）
-if [ ! -f "$MODDIR/data/data.db" ]; then
-    "$MODDIR/alist" admin set admin
-fi
-
-#日志轮转:超过1MB则保留最后200行
-LOG="$MODDIR/download.log"
-log_rotate() {
+    #日志轮转:超过1MB则保留最后200行
+    local LOG="$MODDIR/download.log"
     if [ -f "$LOG" ]; then
         local size
         size=$(wc -c < "$LOG" 2>/dev/null || echo 0)
@@ -51,30 +66,63 @@ log_rotate() {
             mv "$LOG.tmp" "$LOG"
         fi
     fi
-}
 
-#启动alist
-log_rotate
-echo "现在时间$(date +%y-%m-%d-%T)" >> "$LOG"
-echo "正在启动的alist版本信息:" >> "$LOG"
-"$MODDIR/alist" version >> "$LOG" 2>&1
+    echo "现在时间$(date +%y-%m-%d-%T)" >> "$LOG"
+    echo "正在启动的alist版本信息:" >> "$LOG"
+    "$MODDIR/alist" version >> "$LOG" 2>&1
 
-start_alist() {
     if [ -n "$SETSID" ]; then
         $SETSID "$MODDIR/alist" server --data "$MODDIR/data" &
     else
         "$MODDIR/alist" server --data "$MODDIR/data" &
     fi
+
+    update_status_desc "运行中"
 }
 
-start_alist
+#========== 停止alist进程 ==========
+stop_alist() {
+    #创建暂停标记,通知看门狗不要重启
+    touch "$MODDIR/.paused"
+    #终止alist进程
+    pkill -x alist 2>/dev/null
+    #释放wake_lock
+    echo "alist_online" > /sys/power/wake_unlock 2>/dev/null
+    update_status_desc "已停止"
+}
 
-#进程守护看门狗:每60s检查,alist异常退出则自动拉起
-while true; do
-    sleep 60
-    if [ -z "$(pgrep -x alist)" ]; then
-        echo "$(date +%y-%m-%d-%T) 看门狗:alist已退出,正在重启" >> "$LOG"
-        log_rotate
-        start_alist
-    fi
-done
+#========== 看门狗循环 ==========
+run_watchdog() {
+    while true; do
+        sleep 60
+        #如果被手动暂停,跳过重启
+        if [ -f "$MODDIR/.paused" ]; then
+            continue
+        fi
+        #检查alist进程是否存活
+        if [ -z "$(pgrep -x alist)" ]; then
+            echo "$(date +%y-%m-%d-%T) 看门狗:alist已退出,正在重启" >> "$MODDIR/download.log"
+            launch_alist
+        fi
+    done
+}
+
+#========== 主入口 ==========
+setup_env
+
+case "${1:-}" in
+    launch)
+        #手动启动(由action.sh调用)
+        launch_alist
+        ;;
+    stop)
+        #手动停止(由action.sh调用)
+        stop_alist
+        ;;
+    *)
+        #开机启动流程
+        init_module
+        launch_alist
+        run_watchdog
+        ;;
+esac
