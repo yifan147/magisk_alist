@@ -9,6 +9,15 @@ is_running() {
     [ -n "$(pgrep -x alist)" ]
 }
 
+#查找getevent
+GE=""
+for p in /system/bin/getevent /system/xbin/getevent getevent; do
+    if command -v "$p" >/dev/null 2>&1 || [ -x "$p" ]; then
+        GE="$p"
+        break
+    fi
+done
+
 TMP_FILE="$MODDIR/.key_pressed"
 rm -f "$TMP_FILE"
 
@@ -24,11 +33,20 @@ else
 fi
 echo "================================"
 echo "请在 30 秒内按下音量键选择..."
+echo ""
 
-#后台监听第一个音量键事件
-(
-    getevent -ql 2>/dev/null | grep -m1 'KEY_VOLUME' | grep -o 'KEY_VOLUME[A-Z_]*' > "$TMP_FILE"
-) &
+if [ -z "$GE" ]; then
+    echo "[错误] 未找到 getevent 命令"
+    echo "可手动执行: sh $MODDIR/start_alist.sh launch  (启动)"
+    echo "          sh $MODDIR/start_alist.sh stop    (停止)"
+    exit 1
+fi
+
+#后台监听第一个音量键事件,用awk匹配并输出UP/DOWN
+$GE -ql 2>/dev/null | awk '
+    /KEY_VOLUMEUP/   { print "UP";   exit }
+    /KEY_VOLUMEDOWN/ { print "DOWN"; exit }
+' > "$TMP_FILE" &
 LISTENER_PID=$!
 
 #等待按键或超时(30秒)
@@ -48,7 +66,7 @@ rm -f "$TMP_FILE"
 
 echo ""
 case "$key" in
-    KEY_VOLUME_UP)
+    UP)
         if is_running; then
             echo "正在关闭模块..."
             sh "$MODDIR/start_alist.sh" stop
@@ -60,11 +78,12 @@ case "$key" in
             echo "AList 已启动 ✓"
         fi
         ;;
-    KEY_VOLUME_DOWN)
+    DOWN)
         echo "已退出选择界面"
         ;;
     *)
         echo "超时未按键,已退出"
+        echo "(若按键无效,请检查getevent权限)"
         ;;
 esac
 
