@@ -25,9 +25,6 @@ setup_env() {
             break
         fi
     done
-    SETSID=""
-    [ -n "$BUSYBOX" ] && SETSID="$BUSYBOX setsid"
-
     #每次都加权限,防止Magisk挂载后权限丢失
     chmod_alist
 }
@@ -66,9 +63,9 @@ update_status_desc() {
 
 #========== 检查alist是否真正运行 ==========
 is_really_running() {
-    [ -z "$(pgrep -x alist)" ] && return 1
+    [ -z "$(pgrep -f 'alist server')" ] && return 1
     sleep 2
-    [ -z "$(pgrep -x alist)" ] && return 1
+    [ -z "$(pgrep -f 'alist server')" ] && return 1
     return 0
 }
 
@@ -96,8 +93,11 @@ launch_alist() {
     chmod_alist
     "$MODDIR/alist" version >> "$LOG" 2>&1
 
-    if [ -n "$SETSID" ]; then
-        $SETSID "$MODDIR/alist" server --data "$MODDIR/data" >> "$LOG" 2>&1 &
+    # 优先用系统setsid(toybox),其次busybox,确保alist脱离会话不被SIGHUP终止
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$MODDIR/alist" server --data "$MODDIR/data" >> "$LOG" 2>&1 &
+    elif [ -n "$BUSYBOX" ]; then
+        "$BUSYBOX" setsid "$MODDIR/alist" server --data "$MODDIR/data" >> "$LOG" 2>&1 &
     else
         "$MODDIR/alist" server --data "$MODDIR/data" >> "$LOG" 2>&1 &
     fi
@@ -119,7 +119,7 @@ stop_alist() {
     #创建暂停标记,通知看门狗不要重启
     touch "$MODDIR/.paused"
     #终止alist进程
-    pkill -x alist 2>/dev/null
+    pkill -f 'alist server' 2>/dev/null
     #释放wake_lock
     echo "alist_online" > /sys/power/wake_unlock 2>/dev/null
     update_status_desc "已停止"
@@ -134,7 +134,7 @@ run_watchdog() {
             continue
         fi
         #检查alist进程是否存活
-        if [ -z "$(pgrep -x alist)" ]; then
+        if [ -z "$(pgrep -f 'alist server')" ]; then
             echo "$(date +%y-%m-%d-%T) 看门狗:alist已退出,正在重启" >> "$MODDIR/download.log"
             launch_alist
         fi
@@ -155,6 +155,17 @@ case "${1:-}" in
         ;;
     *)
         #开机启动流程
+        # 并发锁:防止service.sh和post-fs-data.sh同时启动
+        BOOT_LOCK="$MODDIR/.boot_lock"
+        if [ -f "$BOOT_LOCK" ]; then
+            LOCK_PID=$(cat "$BOOT_LOCK" 2>/dev/null)
+            if [ -n "$LOCK_PID" ] && [ -d "/proc/$LOCK_PID" ]; then
+                exit 0
+            fi
+        fi
+        echo $$ > "$BOOT_LOCK"
+        # 清除跨重启的.started锁,确保每次开机重新初始化(特别是重新获取wake_lock)
+        rm -f "$MODDIR/.started"
         init_module
         launch_alist
         run_watchdog

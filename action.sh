@@ -6,7 +6,7 @@ MODDIR=${0%/*}
 cd "$MODDIR" || exit 1
 
 is_running() {
-    [ -n "$(pgrep -x alist)" ]
+    pgrep -f 'alist server' >/dev/null 2>&1
 }
 
 #查找getevent
