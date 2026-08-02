@@ -10,6 +10,11 @@ MODDIR=$(dirname "$0")
 [ "$MODDIR" = "." ] && MODDIR=$(pwd)
 cd "$MODDIR" || exit 1
 
+#========== 给alist二进制加可执行权限(每次都执行,解决Magisk挂载后权限丢失) ==========
+chmod_alist() {
+    chmod 755 "$MODDIR/alist" 2>/dev/null
+}
+
 #========== 环境设置(每次都执行) ==========
 setup_env() {
     #寻找busybox( Magisk自带,位置可能不同 )
@@ -22,6 +27,9 @@ setup_env() {
     done
     SETSID=""
     [ -n "$BUSYBOX" ] && SETSID="$BUSYBOX setsid"
+
+    #每次都加权限,防止Magisk挂载后权限丢失
+    chmod_alist
 }
 
 #========== 一次性初始化(仅首次执行) ==========
@@ -30,7 +38,7 @@ init_module() {
     [ -f "$LOCK" ] && return 0
     touch "$LOCK"
 
-    chmod 755 "$MODDIR/alist"
+    chmod_alist
     #持有wake_lock防止深度睡眠时网络中断
     echo "alist_online" > /sys/power/wake_lock 2>/dev/null
     #确保data目录存在
@@ -56,14 +64,11 @@ update_status_desc() {
     mv "$MODDIR/module.prop.tmp" "$MODDIR/module.prop"
 }
 
-#========== 检查alist是否真正运行(进程+端口) ==========
+#========== 检查alist是否真正运行 ==========
 is_really_running() {
-    #进程不存在直接返回失败
     [ -z "$(pgrep -x alist)" ] && return 1
-    #进程存在,再检查端口监听(给3秒缓冲)
-    sleep 3
+    sleep 2
     [ -z "$(pgrep -x alist)" ] && return 1
-    #有进程就算运行(端口检查在某些设备上不可用)
     return 0
 }
 
@@ -71,6 +76,8 @@ is_really_running() {
 launch_alist() {
     #清除暂停标记
     rm -f "$MODDIR/.paused"
+    #每次启动前重新加权限
+    chmod_alist
 
     #日志轮转:超过1MB则保留最后200行
     local LOG="$MODDIR/download.log"
@@ -85,9 +92,10 @@ launch_alist() {
 
     echo "现在时间$(date +%y-%m-%d-%T)" >> "$LOG"
     echo "正在启动的alist版本信息:" >> "$LOG"
+    #每次执行前chmod
+    chmod_alist
     "$MODDIR/alist" version >> "$LOG" 2>&1
 
-    #先标记为已停止,启动后再根据实际情况更新
     if [ -n "$SETSID" ]; then
         $SETSID "$MODDIR/alist" server --data "$MODDIR/data" >> "$LOG" 2>&1 &
     else
@@ -131,15 +139,6 @@ run_watchdog() {
             launch_alist
         fi
     done
-}
-
-#========== 同步状态描述(根据实际运行情况) ==========
-sync_status() {
-    if [ -n "$(pgrep -x alist)" ]; then
-        update_status_desc "运行中"
-    else
-        update_status_desc "已停止"
-    fi
 }
 
 #========== 主入口 ==========
