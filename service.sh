@@ -5,6 +5,12 @@ cd $MODDIR/
 chmod +x dpkg
 chmod 755 alist
 
+#持有wake_lock防止深度睡眠时网络中断（OriginOS省电策略下保持alist可达）
+echo "alist_online" > /sys/power/wake_lock
+
+#更新标志文件,看门狗检测到时不拉起alist,避免与更新流程冲突
+UPDATING_FLAG="$MODDIR/.updating"
+
 #首次安装初始化admin密码（已存在数据库则跳过）
 init_admin() {
 	if [ ! -f $MODDIR/data/data.db ]; then
@@ -28,18 +34,38 @@ file_getprop() { grep "^$2=" "$1" | tail -n1 | cut -d= -f2-; }
 
 
 
+#日志轮转:超过1MB则保留最后200行,防止长期运行膨胀
+log_rotate() {
+	if [ -f $MODDIR/download.log ]; then
+		local size=$(wc -c < $MODDIR/download.log 2>/dev/null || echo 0)
+		if [ "$size" -gt 1048576 ]; then
+			tail -n 200 $MODDIR/download.log > $MODDIR/download.log.tmp
+			mv $MODDIR/download.log.tmp $MODDIR/download.log
+		fi
+	fi
+}
+
 start_alist() {
 #开始启动
 cd $MODDIR/
 chmod 755 alist
+log_rotate
 echo "现在时间$(date +%y-%m-%d-%T)" >> download.log
 echo "正在启动的alist版本信息:
 $($MODDIR/alist version)" >> download.log
-$MODDIR/alist server --data $MODDIR/data&
+#setsid让alist脱离service.sh会话,即使service.sh被回收alist仍可继续运行
+$BUSYBOX setsid $MODDIR/alist server --data $MODDIR/data &
 }
 stop_alist() {
-kill $(pgrep alist)
-sleep 2s
+	if [ -n "$(pgrep -x alist)" ]; then
+		pkill -x alist
+		sleep 2s
+	fi
+}
+#更新前停止alist并置标志,防止看门狗误拉起
+stop_for_update() {
+	touch "$UPDATING_FLAG"
+	stop_alist
 }
 
 check_alist() {
@@ -82,7 +108,7 @@ echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
     echo "现在开始更新" >> download.log
     if [ -f tmp/tmp_deb/data/data/com.termux/files/usr/bin/alist ]; then
       echo "文件下载并解压成功" >> download.log
-      stop_alist
+      stop_for_update
       echo "在更新文件前，检查alist是否还在运行" >> download.log
       check_alist
       sleep 3s
@@ -90,6 +116,7 @@ echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
       rm -rf tmp/tmp_deb/*;
       rm -f Packages;
       start_alist
+      rm -f "$UPDATING_FLAG"
       echo "$(date +%y-%m-%d-%T) 更新成功,正在重启alist" >> download.log
     else
         echo "文件下载失败，请重启设备再试" >> download.log
@@ -98,6 +125,20 @@ echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
   else
     echo "$(date +%y-%m-%d-%T) 无需更新" >> download.log
   fi
+  #无论是否更新都清理临时文件,避免Packages残留污染模块目录
+  rm -f Packages
+  rm -rf tmp/tmp_deb/* 2>/dev/null
+}
+
+#进程守护看门狗:每60s检查,alist异常退出则自动拉起(更新中除外)
+watchdog() {
+	while true; do
+		sleep 60s
+		if [ ! -f "$UPDATING_FLAG" ] && [ -z "$(pgrep -x alist)" ]; then
+			echo "$(date +%y-%m-%d-%T) 看门狗:alist已退出,正在重启" >> download.log
+			start_alist
+		fi
+	done
 }
 
 #启动alist
@@ -105,6 +146,8 @@ init_admin
 sleep 1s
 start_alist
 check_alist
+#后台启动看门狗
+watchdog &
 #等待网络就绪后再做首次更新检查（避免开机瞬间拉取Packages失败）
 sleep 10s
 update_check
