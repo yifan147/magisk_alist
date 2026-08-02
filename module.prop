@@ -1,6 +1,6 @@
 id=Alist_online
 name=Alist_online
-version=v3.29.1
-versionCode=3291
-author=lxsy [auto version]
-description=支持arm64设备,开机自启alist,看门狗守护进程,用户名/密码admin
+version=v3.62.0
+versionCode=3620
+author=lxsy
+description=arm64设备原生运行alist,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin
