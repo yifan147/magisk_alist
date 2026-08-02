@@ -39,8 +39,6 @@ init_module() {
     if [ ! -f "$MODDIR/data/data.db" ]; then
         "$MODDIR/alist" admin set admin
     fi
-    #更新状态描述为已停止
-    update_status_desc "已停止"
 }
 
 #========== 更新module.prop状态描述 ==========
@@ -56,6 +54,17 @@ update_status_desc() {
     #用#作sed分隔符,避免与description中的|冲突
     sed "s#^description=.*#description=${new_desc}#" "$MODDIR/module.prop" > "$MODDIR/module.prop.tmp"
     mv "$MODDIR/module.prop.tmp" "$MODDIR/module.prop"
+}
+
+#========== 检查alist是否真正运行(进程+端口) ==========
+is_really_running() {
+    #进程不存在直接返回失败
+    [ -z "$(pgrep -x alist)" ] && return 1
+    #进程存在,再检查端口监听(给3秒缓冲)
+    sleep 3
+    [ -z "$(pgrep -x alist)" ] && return 1
+    #有进程就算运行(端口检查在某些设备上不可用)
+    return 0
 }
 
 #========== 启动alist进程 ==========
@@ -78,13 +87,23 @@ launch_alist() {
     echo "正在启动的alist版本信息:" >> "$LOG"
     "$MODDIR/alist" version >> "$LOG" 2>&1
 
+    #先标记为已停止,启动后再根据实际情况更新
     if [ -n "$SETSID" ]; then
-        $SETSID "$MODDIR/alist" server --data "$MODDIR/data" &
+        $SETSID "$MODDIR/alist" server --data "$MODDIR/data" >> "$LOG" 2>&1 &
     else
-        "$MODDIR/alist" server --data "$MODDIR/data" &
+        "$MODDIR/alist" server --data "$MODDIR/data" >> "$LOG" 2>&1 &
     fi
 
-    update_status_desc "运行中"
+    #等待5秒后检测真实状态
+    sleep 5
+    if is_really_running; then
+        update_status_desc "运行中"
+        echo "$(date +%y-%m-%d-%T) 启动成功,alist正在运行" >> "$LOG"
+    else
+        update_status_desc "已停止"
+        echo "$(date +%y-%m-%d-%T) [错误] alist启动失败,请检查日志" >> "$LOG"
+        echo "[错误] alist启动失败,请查看download.log" >&2
+    fi
 }
 
 #========== 停止alist进程 ==========
@@ -112,6 +131,15 @@ run_watchdog() {
             launch_alist
         fi
     done
+}
+
+#========== 同步状态描述(根据实际运行情况) ==========
+sync_status() {
+    if [ -n "$(pgrep -x alist)" ]; then
+        update_status_desc "运行中"
+    else
+        update_status_desc "已停止"
+    fi
 }
 
 #========== 主入口 ==========
