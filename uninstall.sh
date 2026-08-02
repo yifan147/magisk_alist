@@ -1,2 +1,2 @@
-# 卸载模块时,删除运行过程中的备份文件
+# 卸载模块时,清理旧版本可能残留的备份目录
 rm -rf /data/adb/Alist_online_backups

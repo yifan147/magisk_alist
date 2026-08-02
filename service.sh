@@ -1,39 +1,16 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
 BUSYBOX="/data/adb/magisk/busybox"
-#MODDIR=/data/adb/modules/Alist_online
 cd $MODDIR/
 chmod +x dpkg
 chmod 755 alist
 
-backup_alist() {
-	cd $MODDIR/
-	mkdir -p /data/adb/Alist_online_backups/
-	cp -r $MODDIR/data/* /data/adb/Alist_online_backups/
-	cp $MODDIR/alist /data/adb/Alist_online_backups/
-	echo "$(date +%y-%m-%d-%T)的备份文件" >> /data/adb/Alist_online_backups/backup.log
-}
-
-restore_alist() {
-	cd $MODDIR/
-	if [ -d /data/adb/Alist_online_backups/ ]
-	then
-	cp -r /data/adb/Alist_online_backups/* $MODDIR/data/
-		if [ -f /data/adb/Alist_online_backups/alist ]
-		then
-			cp /data/adb/Alist_online_backups/alist $MODDIR/
-			else
-			echo "$(date +%y-%m-%d-%T)未发现备份的alist二进制文件，跳过此项" >> /data/adb/Alist_online_backups/backup.log
-			continue
-			fi
-	chmod -R 777 $MODDIR/data/
-	echo "$(date +%y-%m-%d-%T)恢复数据成功" >> /data/adb/Alist_online_backups/backup.log
-	else
-	echo "$(date +%y-%m-%d-%T)第一次安装，跳过恢复数据"  >> /data/adb/Alist_online_backups/backup.log
-	$MODDIR/alist admin set admin
+#首次安装初始化admin密码（已存在数据库则跳过）
+init_admin() {
+	if [ ! -f $MODDIR/data/data.db ]; then
+		$MODDIR/alist admin set admin
 	fi
 }
-
 
 find_arch() {
 local abi=$(file_getprop /system/build.prop ro.product.cpu.abi);
@@ -58,12 +35,7 @@ chmod 755 alist
 echo "现在时间$(date +%y-%m-%d-%T)" >> download.log
 echo "正在启动的alist版本信息:
 $($MODDIR/alist version)" >> download.log
-#网络连接成功才启动alist,持续检测
-echo "等待网络" >> download.log
-until [ "$(curl -Is qq.com)" ];do sleep 1s;done;
-echo "网络连接成功" >> download.log
 $MODDIR/alist server --data $MODDIR/data&
-#echo "PowerManagerService.noSuspend" > /sys/power/wake_lock
 }
 stop_alist() {
 kill $(pgrep alist)
@@ -92,7 +64,7 @@ echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
 	
 	#如果能直接访问github，最新版本号可以这样获取curl -s "https://api.github.com/repos/alist-org/alist/releases/latest"|grep tag_name|tr -d -c '[0-9] .'
 	cur_ver=$($MODDIR/alist version|grep -iw "^version"|tr -d -c '[0-9] .')
-	#本模块会备份恢复上次运行alist的版本,所以模块自带的alist版本不会影响后续检测升级,使用的是上次升级后的版本
+	#模块自带的alist版本仅用于首次启动，后续以实际更新后的版本为准
 	echo "当前版本为$cur_ver" >> download.log 2>&1
   # 比较版本号
   if $MODDIR/dpkg --compare-versions "$cur_ver" lt "$new_ver"; then
@@ -129,26 +101,18 @@ echo "$(date +%y-%m-%d-%T) 本机架构${ARCH}" >> download.log
 }
 
 #启动alist
-#stop_alist
-#修复模块安装过程中data目录数据被覆盖问题
-#这里是将上次的备份数据恢复到data目录，最快的一次备份数据也要启动5分钟后才有
-restore_alist
+init_admin
 sleep 1s
 start_alist
 check_alist
+#等待网络就绪后再做首次更新检查（避免开机瞬间拉取Packages失败）
+sleep 10s
 update_check
 check_alist
-#5分钟后备份一次
-sleep 5m
-backup_alist
-#60分钟后备份一次的数据
-sleep 60m
-backup_alist
-#每天备份一次，同时进行检测更新
+#每5天检测更新一次
 while true;
 do
-	sleep 1d
-	backup_alist
+	sleep 5d
 	update_check
 	sleep 1s
 	check_alist
