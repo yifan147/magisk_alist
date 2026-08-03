@@ -6,7 +6,7 @@ MODDIR=${0%/*}
 cd "$MODDIR" || exit 1
 
 is_running() {
-    pgrep -f 'alist server' >/dev/null 2>&1
+    pgrep -f 'openlist server' >/dev/null 2>&1
 }
 
 #查找getevent
@@ -23,11 +23,11 @@ rm -f "$TMP_FILE"
 
 echo "================================"
 if is_running; then
-    echo "  AList 运行中 ✓"
+    echo "  OpenList 运行中 ✓"
     echo "  [音量上] 关闭模块"
     echo "  [音量下] 退出选择界面"
 else
-    echo "  AList 已停止 ✗"
+    echo "  OpenList 已停止 ✗"
     echo "  [音量上] 打开模块"
     echo "  [音量下] 退出选择界面"
 fi
@@ -37,8 +37,8 @@ echo ""
 
 if [ -z "$GE" ]; then
     echo "[错误] 未找到 getevent 命令"
-    echo "可手动执行: sh $MODDIR/start_alist.sh launch  (启动)"
-    echo "          sh $MODDIR/start_alist.sh stop    (停止)"
+    echo "可手动执行: sh $MODDIR/start_openlist.sh launch  (启动)"
+    echo "          sh $MODDIR/start_openlist.sh stop    (停止)"
     exit 1
 fi
 
@@ -69,13 +69,13 @@ case "$key" in
     UP)
         if is_running; then
             echo "正在关闭模块..."
-            sh "$MODDIR/start_alist.sh" stop
-            echo "AList 已关闭 ✗"
+            sh "$MODDIR/start_openlist.sh" stop
+            echo "OpenList 已关闭 ✗"
         else
             echo "正在打开模块..."
-            sh "$MODDIR/start_alist.sh" launch
+            sh "$MODDIR/start_openlist.sh" launch
             sleep 2
-            echo "AList 已启动 ✓"
+            echo "OpenList 已启动 ✓"
         fi
         ;;
     DOWN)

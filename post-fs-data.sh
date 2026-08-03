@@ -10,5 +10,5 @@ MODDIR=${0%/*}
     #额外等5秒,确保Magisk守护进程就绪
     sleep 5
     #后台启动,不exec(避免无限循环阻塞)
-    sh $MODDIR/start_alist.sh
+    sh $MODDIR/start_openlist.sh
 ) &
