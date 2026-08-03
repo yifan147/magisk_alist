@@ -46,17 +46,34 @@ init_module() {
     fi
 }
 
-#========== 更新module.prop状态描述 ==========
+#========== 获取当前WiFi的IP地址 ==========
+get_wifi_ip() {
+    local ip=""
+    # 方法1: ip命令(toybox)
+    if command -v ip >/dev/null 2>&1; then
+        ip=$(ip -4 addr show wlan0 2>/dev/null | grep -o 'inet [0-9.]*' | awk '{print $2}' | head -1)
+    fi
+    # 方法2: busybox ifconfig
+    if [ -z "$ip" ] && [ -n "$BUSYBOX" ]; then
+        ip=$($BUSYBOX ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | sed 's/addr://' | head -1)
+    fi
+    # 方法3: getprop (DHCP分配的IP)
+    if [ -z "$ip" ]; then
+        ip=$(getprop dhcp.wlan0.ipaddress 2>/dev/null)
+    fi
+    echo "$ip"
+}
+
+#========== 更新module.prop状态描述(含WiFi IP) ==========
 update_status_desc() {
     local status="$1"
-    local base_desc="arm64设备原生运行OpenList,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin"
-    local new_desc
-    case "$status" in
-        运行中)  new_desc="${base_desc} ✓ 运行中" ;;
-        已停止)  new_desc="${base_desc} ✗ 已停止" ;;
-        *)       new_desc="${base_desc}" ;;
-    esac
-    #用#作sed分隔符,避免与description中的|冲突
+    local ip
+    ip=$(get_wifi_ip)
+    local access="http://127.0.0.1:5244"
+    [ -n "$ip" ] && access="http://${ip}:5244"
+    local status_symbol="✗ 已停止"
+    [ "$status" = "运行中" ] && status_symbol="✓ 运行中"
+    local new_desc="arm64原生运行OpenList,看门狗守护,双触发兼容alpha版 | 访问 ${access} 账户admin/admin | ${status_symbol}"
     sed "s#^description=.*#description=${new_desc}#" "$MODDIR/module.prop" > "$MODDIR/module.prop.tmp"
     mv "$MODDIR/module.prop.tmp" "$MODDIR/module.prop"
 }
@@ -127,6 +144,7 @@ stop_openlist() {
 
 #========== 看门狗循环 ==========
 run_watchdog() {
+    local last_ip=""
     while true; do
         sleep 60
         #如果被手动暂停,跳过重启
@@ -137,6 +155,14 @@ run_watchdog() {
         if [ -z "$(pgrep -f 'openlist server')" ]; then
             echo "$(date +%y-%m-%d-%T) 看门狗:OpenList已退出,正在重启" >> "$MODDIR/openlist.log"
             launch_openlist
+        else
+            # 进程在跑,检查WiFi IP是否变化,变化则刷新description
+            local cur_ip
+            cur_ip=$(get_wifi_ip)
+            if [ "$cur_ip" != "$last_ip" ]; then
+                last_ip="$cur_ip"
+                update_status_desc "运行中"
+            fi
         fi
     done
 }

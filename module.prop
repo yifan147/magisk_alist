@@ -4,4 +4,4 @@ version=v1.45
 versionCode=145
 author=zkana
 action=1
-description=arm64设备原生运行OpenList,开机自启,看门狗守护,双触发兼容alpha版Magisk,默认账户admin/admin ✗ 已停止
+description=arm64原生运行OpenList,看门狗守护,双触发兼容alpha版 | 访问 http://127.0.0.1:5244 账户admin/admin | ✗ 已停止
