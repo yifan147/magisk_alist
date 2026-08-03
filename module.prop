@@ -1,7 +1,7 @@
 id=Openlist_online
 name=Openlist_online
-version=v1.48
-versionCode=148
+version=v1.49
+versionCode=149
 author=zkana
 action=1
 description=arm64原生运行OpenList,看门狗守护,双触发兼容alpha版 | 访问 http://127.0.0.1:5244 账户admin/admin | ✗ 已停止
